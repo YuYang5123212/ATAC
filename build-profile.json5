@@ -1,0 +1,56 @@
+{
+  "app": {
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "C:\\Users\\lenovo\\.ohos\\config\\default_ArduinoandHarmony_75IpYWQGyl03PVWBecqfkqVvm4dLMtSXNxgylXwOI3E=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001B986DD70179384141751D41375F40094A8BBDEE7A1FC05771F059145E6F82AF6AE2D449C6E86E83",
+          "profile": "C:\\Users\\lenovo\\.ohos\\config\\default_ArduinoandHarmony_75IpYWQGyl03PVWBecqfkqVvm4dLMtSXNxgylXwOI3E=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "C:\\Users\\lenovo\\.ohos\\config\\default_ArduinoandHarmony_75IpYWQGyl03PVWBecqfkqVvm4dLMtSXNxgylXwOI3E=.p12",
+          "storePassword": "0000001B747C91161851F854F04F27D4EB5F3088C6F1FEBDD6424A20ABC47F30F7AD1F47747C35B5638DC1"
+        }
+      }
+    ],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        "targetSdkVersion": "6.0.0(20)",
+        "compatibleSdkVersion": "5.0.5(17)",
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug",
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "string": [
+    {
+      "name": "module_desc",
+      "value": "让祁厅长守护你的门禁"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "description"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "AT门禁"
+    },{
+      "name": "access_bluetooth_reason",
+      "value": "需要使用蓝牙连接到门禁"
+    }
+  ]
+}
