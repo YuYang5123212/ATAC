@@ -1,9 +1,6 @@
 {
   "src": [
     "pages/LoginPage",
-    "pages/MainContainer",
-    "pages/LogPage",
-    "pages/Index",
-    "pages/MyPage"
+    "pages/MainContainer"
   ]
 }
