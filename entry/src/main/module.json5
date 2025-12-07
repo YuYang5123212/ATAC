@@ -19,6 +19,26 @@
           "when": "inuse"
         }
       },
+      {
+        "name": "ohos.permission.DISCOVER_BLUETOOTH",
+        "reason": "$string:access_bluetooth_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      },
+      {
+        "name": "ohos.permission.APPROXIMATELY_LOCATION",
+        "reason": "$string:access_bluetooth_reason",
+        "usedScene": {
+          "abilities": [
+            "EntryAbility"
+          ],
+          "when": "inuse"
+        }
+      }
     ],
     "abilities": [
     {

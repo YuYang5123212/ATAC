@@ -1,75 +1,110 @@
-// F:/Harmony/ArduinoandHarmony/entry/src/main/ets/pages/Index.ets
-import { BluetoothManager } from '../utils/BluetoothManager';
-import { Button } from '@kit.ArkUI';
+import { BluetoothManager, ScannedDevice } from '../utils/BluetoothManager';
 import { PermissionManager } from '../utils/PermissionManager';
+import { promptAction } from '@kit.ArkUI';
 import type common from '@ohos.app.ability.common';
 
-@Entry
 @Component
 export struct IndexPage {
+  // 状态变量
   @State connectionStatus: string = "未连接";
-  private btManager: BluetoothManager = new BluetoothManager();
+  @State scannedDevices: Array<ScannedDevice> = [];
 
-  private abilityContext: common.UIAbilityContext = getContext(this) as common.UIAbilityContext;
+  // 实例化管理器
+  private btManager = new BluetoothManager();
+  private context = getContext(this) as common.UIAbilityContext;
 
   build() {
-    Column({ space: 20 }) {
-
-      Text("智能门禁控制 (HC-05)")
+    Column() {
+      // 1. 标题区
+      Text("智能门禁控制系统")
         .fontSize(24)
         .fontWeight(FontWeight.Bold)
-        .margin({ top: 50 })
+        .margin({ top: 20, bottom: 10 })
 
-      Text(`状态: ${this.connectionStatus}`)
-        .fontSize(18)
-        .fontColor(this.connectionStatus === "已连接" ? Color.Green : Color.Red)
+      Text(`当前状态: ${this.connectionStatus}`)
+        .fontSize(16)
+        .fontColor(this.connectionStatus.includes("已连接") ? Color.Green : Color.Gray)
+        .margin({ bottom: 20 })
 
-      Button("连接设备")
+      // 2. 扫描按钮
+      Button("扫描设备")
         .width('80%')
-        .height(50)
-        // 【关键修正】：给异步函数添加显式返回类型 'void' (解决 ERROR 1)
-        .onClick(async (): Promise<void> => {
-          this.connectionStatus = "权限检查...";
+        .onClick(async () => {
+          // 先申请权限
+          let granted = await PermissionManager.requestBluetoothPermission(this.context);
+          if (granted) {
+            this.scannedDevices = []; // 清空旧列表
+            this.connectionStatus = "正在扫描...";
 
-          // 核心修改：先请求权限
-          let hasPermission = await PermissionManager.requestBluetoothPermission(this.abilityContext);
-
-          if (!hasPermission) {
-            this.connectionStatus = "未连接 (缺少权限)";
-            return;
-          }
-
-          // 权限通过后，再执行连接逻辑
-          this.connectionStatus = "连接中...";
-          let isSuccess = await this.btManager.connectToHC05();
-
-          if (isSuccess) {
-            this.connectionStatus = "已连接";
-          } else {
-            this.connectionStatus = "连接失败";
+            // 启动扫描
+            this.btManager.startScan((device) => {
+              // 简单的去重逻辑
+              let exists = this.scannedDevices.some(d => d.deviceId === device.deviceId);
+              if (!exists) {
+                this.scannedDevices.push(device);
+              }
+            });
           }
         })
-      Divider()
 
-      Button("开门 (发送 '1')")
-        .width('80%')
-        .height(60)
-        .backgroundColor(Color.Orange)
-        .onClick(() => {
-          this.btManager.sendCommand("1");
+      // 3. 扫描结果列表
+      List() {
+        ForEach(this.scannedDevices, (item: ScannedDevice) => {
+          ListItem() {
+            Row() {
+              Column() {
+                Text(item.deviceName).fontSize(18).fontWeight(FontWeight.Bold)
+                Text(item.deviceId).fontSize(14).fontColor(Color.Gray)
+              }
+              Blank()
+              Button("连接")
+                .height(32)
+                .onClick(async () => {
+                  this.connectionStatus = `正在连接 ${item.deviceName}...`;
+                  let isSuccess = await this.btManager.connect(item.deviceId);
+                  if (isSuccess) {
+                    this.connectionStatus = "已连接: " + item.deviceName;
+                    this.scannedDevices = []; // 连接成功后清空列表，保持界面整洁
+                  } else {
+                    this.connectionStatus = "连接失败";
+                  }
+                })
+            }
+            .width('100%')
+            .padding(10)
+            .backgroundColor('#F5F5F5')
+            .borderRadius(8)
+            .margin({ bottom: 5 })
+          }
         })
+      }
+      .width('90%')
+      .height('30%') // 限制列表高度
+      .margin({ bottom: 20 })
 
-      Button("关门 (发送 '0')")
-        .width('80%')
-        .height(60)
-        .backgroundColor(Color.Gray)
-        .onClick(() => {
-          this.btManager.sendCommand("0");
-        })
+      Divider().width('90%').color(Color.Gray)
 
+      // 4. 控制按钮区
+      Row({ space: 20 }) {
+        Button("开 门")
+          .type(ButtonType.Capsule)
+          .backgroundColor(Color.Blue)
+          .width(100)
+          .onClick(() => {
+            this.btManager.openDoor();
+          })
+
+        Button("关 门")
+          .type(ButtonType.Capsule)
+          .backgroundColor(Color.Red)
+          .width(100)
+          .onClick(() => {
+            this.btManager.closeDoor();
+          })
+      }
+      .margin({ top: 30 })
     }
     .width('100%')
     .height('100%')
-    .justifyContent(FlexAlign.Start)
   }
 }
