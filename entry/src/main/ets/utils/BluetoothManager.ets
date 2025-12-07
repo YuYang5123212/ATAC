@@ -10,7 +10,7 @@ export interface ScannedDevice {
 }
 
 export class BluetoothManager {
-  // 根据你截图填写的 BLE UUID
+  // 根据你截图确认的 UUID
   private serviceUUID: string = '0000ffe0-0000-1000-8000-00805f9b34fb';
   private characteristicUUID: string = '0000ffe1-0000-1000-8000-00805f9b34fb';
 
@@ -49,28 +49,21 @@ export class BluetoothManager {
       });
 
       ble.startBLEScan(null);
-      try { promptAction.showToast({ message: '开始 BLE 扫描...' }); } catch(e) {}
-      console.info('BLE 扫描已启动');
-
+      try { promptAction.showToast({ message: '扫描中...' }); } catch(e) {}
     } catch (err) {
       console.error('BLE 扫描启动失败: ' + JSON.stringify(err));
-      try { promptAction.showToast({ message: '扫描启动失败' }); } catch(e) {}
     }
   }
 
-  /**
-   * 2. 停止扫描
-   */
   public stopScan() {
     try {
       ble.stopBLEScan();
       ble.off('BLEDeviceFind');
-      console.info('停止 BLE 扫描');
     } catch (err) {}
   }
 
   /**
-   * 3. 连接 BLE 设备
+   * 2. 连接 BLE 设备
    */
   public async connect(deviceId: string): Promise<boolean> {
     this.stopScan();
@@ -79,12 +72,12 @@ export class BluetoothManager {
       this.close();
     }
 
-    try { promptAction.showToast({ message: '正在连接 BLE...' }); } catch(e) {}
+    try { promptAction.showToast({ message: '正在连接...' }); } catch(e) {}
 
     try {
       this.gattClient = ble.createGattClientDevice(deviceId);
     } catch(err) {
-      console.error('创建GATT客户端失败:' + err);
+      console.error('创建GATT失败:' + err);
       return false;
     }
 
@@ -96,55 +89,65 @@ export class BluetoothManager {
 
       try {
         this.gattClient.on('BLEConnectionStateChange', async (state) => {
-          console.info('连接状态变化: ' + state.state);
+          console.info('BLE状态: ' + state.state);
 
           if (state.state === constant.ProfileConnectionState.STATE_CONNECTED) {
-            console.info('BLE 已连接，准备获取服务...');
+            console.info('BLE 已连接，等待配对完成...');
+            try { promptAction.showToast({ message: '已连接，请留意配对弹窗' }); } catch(e) {}
+
+            // 【核心修改1】：将延时增加到 2500ms
+            // 给系统足够的时间弹出配对框并完成加密，否则获取服务会失败
             setTimeout(async () => {
               await this.discoverServices(resolve);
-            }, 500);
+            }, 2500);
 
           } else if (state.state === constant.ProfileConnectionState.STATE_DISCONNECTED) {
             console.warn('BLE 已断开');
+            try { promptAction.showToast({ message: '设备已断开' }); } catch(e) {}
             this.close();
           }
         });
 
         this.gattClient.connect();
       } catch (err) {
-        console.error('发起连接失败: ' + JSON.stringify(err));
+        console.error('连接异常: ' + JSON.stringify(err));
         resolve(false);
       }
     });
   }
 
-  // 内部辅助：发现服务并启用通知
   private async discoverServices(resolve: (value: boolean) => void) {
     if (!this.gattClient) return;
 
     try {
+      console.info('开始搜索服务...');
       let services = await this.gattClient.getServices();
+
+      // 打印查找到的所有服务，方便调试
+      services.forEach(s => console.info(`发现服务 UUID: ${s.serviceUuid}`));
+
       let targetService = services.find(s => s.serviceUuid === this.serviceUUID);
 
       if (!targetService) {
-        try { promptAction.showToast({ message: '未找到透传服务 FFE0' }); } catch(e) {}
-        console.error('未找到 UUID 为 ' + this.serviceUUID + ' 的服务');
-        resolve(false);
+        try { promptAction.showToast({ message: '未找到服务 FFE0，请重试' }); } catch(e) {}
+        console.error('服务搜索失败或未匹配');
+        // 不要 resolve(false)，保持连接让用户重试，或者自动重试
+        resolve(true);
         return;
       }
 
-      try { promptAction.showToast({ message: '连接成功，正在握手...' }); } catch(e) {}
+      try { promptAction.showToast({ message: '服务就绪，可以控制了！' }); } catch(e) {}
       await this.enableNotification();
       resolve(true);
 
     } catch (err) {
-      console.error('获取服务失败: ' + JSON.stringify(err));
-      try { promptAction.showToast({ message: '获取服务失败' }); } catch(e) {}
+      console.error('获取服务异常: ' + JSON.stringify(err));
+      // 常见错误：GATT 133 或 128，通常是因为配对没完成就调用了getServices
+      try { promptAction.showToast({ message: '服务获取受阻，请重连' }); } catch(e) {}
       resolve(false);
     }
   }
 
-  // 启用特征值通知
   private async enableNotification() {
     if (!this.gattClient) return;
 
@@ -153,10 +156,10 @@ export class BluetoothManager {
         let value = new Uint8Array(characteristicChange.characteristicValue);
         let textDecoder = util.TextDecoder.create("utf-8", { ignoreBOM: true });
         let str = textDecoder.decodeToString(value);
-        console.info("收到 Arduino 数据: " + str);
+        console.info("收到回复: " + str);
+        try { promptAction.showToast({ message: '收到: ' + str }); } catch(e) {}
       });
 
-      // 【核心修复】：添加 descriptors: [] 以满足 strict 类型检查
       let notifyChar: ble.BLECharacteristic = {
         serviceUuid: this.serviceUUID,
         characteristicUuid: this.characteristicUUID,
@@ -165,9 +168,8 @@ export class BluetoothManager {
       };
 
       await this.gattClient.setCharacteristicChangeNotification(notifyChar, true);
-      console.info('通知已启用');
     } catch (err) {
-      console.error('启用通知失败: ' + JSON.stringify(err));
+      console.error('通知启用失败 (不影响发送): ' + JSON.stringify(err));
     }
   }
 
@@ -176,7 +178,7 @@ export class BluetoothManager {
    */
   public async sendCommand(cmd: string) {
     if (!this.gattClient) {
-      try { promptAction.showToast({ message: '未连接' }); } catch(e) {}
+      try { promptAction.showToast({ message: '蓝牙未连接' }); } catch(e) {}
       return;
     }
 
@@ -186,7 +188,6 @@ export class BluetoothManager {
       dataView.setUint8(i, cmd.charCodeAt(i));
     }
 
-    // 【核心修复】：添加 descriptors: [] 以满足 strict 类型检查
     let writeChar: ble.BLECharacteristic = {
       serviceUuid: this.serviceUUID,
       characteristicUuid: this.characteristicUUID,
@@ -195,11 +196,21 @@ export class BluetoothManager {
     };
 
     try {
-      await this.gattClient.writeCharacteristicValue(writeChar, ble.GattWriteType.WRITE_NO_RESPONSE);
-      console.info('指令发送成功: ' + cmd);
+      // 【核心修改2】：改为 WRITE (带响应写入)
+      // 很多克隆模块不支持 WRITE_NO_RESPONSE，会导致静默失败
+      await this.gattClient.writeCharacteristicValue(writeChar, ble.GattWriteType.WRITE);
+      console.info('指令已发送: ' + cmd);
+      // try { promptAction.showToast({ message: '发送成功: ' + cmd }); } catch(e) {}
     } catch (err) {
       console.error('发送失败: ' + JSON.stringify(err));
-      try { promptAction.showToast({ message: '发送失败' }); } catch(e) {}
+
+      // 如果 WRITE 失败，尝试 fallback 到 WRITE_NO_RESPONSE
+      console.info('尝试无响应写入模式...');
+      try {
+        await this.gattClient.writeCharacteristicValue(writeChar, ble.GattWriteType.WRITE_NO_RESPONSE);
+      } catch(e2) {
+        try { promptAction.showToast({ message: '发送完全失败' }); } catch(e) {}
+      }
     }
   }
 
@@ -207,9 +218,6 @@ export class BluetoothManager {
   public closeDoor() { this.sendCommand("0"); }
   public checkStatus() { this.sendCommand("?"); }
 
-  /**
-   * 5. 断开连接
-   */
   public close() {
     if (this.gattClient) {
       try {
