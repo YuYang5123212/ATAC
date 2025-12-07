@@ -90,7 +90,7 @@ export class BluetoothManager {
     }
 
     let sppOption: socket.SppOptions = {
-      uuid: this.uuid,
+      uuid: '00001101-0000-1000-8000-00805F9B34FB',
       secure: false, // 保持非安全连接
       type: 0
     };
