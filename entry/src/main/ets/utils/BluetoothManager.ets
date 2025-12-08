@@ -20,7 +20,6 @@ export class BluetoothManager {
   public startScan(callback: (device: ScannedDevice) => void) {
     try {
       if (access.getState() !== access.BluetoothState.STATE_ON) {
-        // 尝试静默不弹窗，交给 UI 处理提示，或者只弹一次
         return;
       }
     } catch (err) {}
@@ -40,7 +39,7 @@ export class BluetoothManager {
           }
         });
       });
-      // 允许重复上报，这样能实时更新 RSSI 或确认设备在线
+      // 允许重复上报
       ble.startBLEScan(null);
     } catch (err) {
       console.error('BLE 扫描启动失败: ' + JSON.stringify(err));
@@ -75,7 +74,6 @@ export class BluetoothManager {
           console.info('BLE状态: ' + state.state);
 
           if (state.state === constant.ProfileConnectionState.STATE_CONNECTED) {
-            // 【关键】更新全局状态：当前连接的 ID
             AppStorage.setOrCreate('CurrentConnectedID', deviceId);
 
             setTimeout(async () => {
@@ -83,9 +81,7 @@ export class BluetoothManager {
             }, 2500);
 
           } else if (state.state === constant.ProfileConnectionState.STATE_DISCONNECTED) {
-            // 【关键】更新全局状态：清空连接 ID
             AppStorage.setOrCreate('CurrentConnectedID', '');
-
             try { promptAction.showToast({ message: '连接已断开' }); } catch(e) {}
             this.close();
           }
@@ -104,7 +100,7 @@ export class BluetoothManager {
       let services = await this.gattClient.getServices();
       let targetService = services.find(s => s.serviceUuid === this.serviceUUID);
       if (!targetService) {
-        // 虽然没找到服务，但连接是通的，暂且认为成功，允许重试
+        // 没找到服务也当作成功，允许重试
         resolve(true);
         return;
       }
@@ -153,7 +149,6 @@ export class BluetoothManager {
     try {
       await this.gattClient.writeCharacteristicValue(writeChar, ble.GattWriteType.WRITE);
     } catch (err) {
-      // 失败重试 No Response 模式
       try {
         await this.gattClient.writeCharacteristicValue(writeChar, ble.GattWriteType.WRITE_NO_RESPONSE);
       } catch(e2) {}
@@ -172,7 +167,6 @@ export class BluetoothManager {
         this.gattClient.close();
       } catch (e) {}
       this.gattClient = null;
-      // 确保全局状态被重置
       AppStorage.setOrCreate('CurrentConnectedID', '');
     }
   }

@@ -6,7 +6,6 @@ import type common from '@ohos.app.ability.common';
 // 初始化持久化存储
 PersistentStorage.persistProp('HistoryDevices', []);
 
-// 设备数据结构（用于存储）
 interface SavedDevice {
   deviceId: string;
   deviceName: string;
@@ -14,15 +13,11 @@ interface SavedDevice {
 
 @Component
 struct DeviceItem {
-  // 【修复1】给所有属性添加默认初始值
   device: ScannedDevice = { deviceId: '', deviceName: '', rssi: 0 };
   isHistory: boolean = false;
-  isOnline: boolean = false;
   btManager: BluetoothManager | null = null;
-  // 回调函数也要初始化
   onConnectSuccess: (device: ScannedDevice) => void = (device: ScannedDevice) => {};
 
-  // 全局连接状态
   @StorageLink('CurrentConnectedID') currentConnectedID: string = '';
   @State isConnecting: boolean = false;
 
@@ -66,23 +61,27 @@ struct DeviceItem {
   }
 
   isButtonEnabled(): boolean {
-    if (this.isHistory && !this.isOnline) return false;
+    // 1. 如果正在连接中，禁用
     if (this.isConnecting) return false;
+
+    // 2. 如果连着别的设备，禁用（防止多连冲突）
     if (this.currentConnectedID !== '' && !this.isConnected()) return false;
+
+    // 其他情况（包括历史设备无论是否在线）都允许点击
     return true;
   }
 
   getButtonText(): string {
-    if (this.isHistory && !this.isOnline) return "未找到";
     if (this.isConnecting) return "连接中...";
     if (this.isConnected()) return "断 开";
+    // 历史设备不再显示"未找到"或"尝试连接"，统一回归原始设计
     return "连 接";
   }
 
   getButtonColor(): ResourceColor {
-    if (this.isHistory && !this.isOnline) return '#E0E0E0';
     if (this.isConnecting) return '#CCCCCC';
     if (this.isConnected()) return '#FF5252';
+    // 默认蓝色
     return '#007DFF';
   }
 
@@ -107,59 +106,70 @@ struct DeviceItem {
 @Component
 export struct IndexPage {
   @StorageLink('HistoryDevices') historyDevices: SavedDevice[] = [];
-  @State onlineHistoryIDs: string[] = [];
   @State newDevices: ScannedDevice[] = [];
 
   private btManager = new BluetoothManager();
   private context = getContext(this) as common.UIAbilityContext;
+  private scanTimer: number = -1; // 定时器 ID
 
   async aboutToAppear() {
     let granted = await PermissionManager.requestBluetoothPermission(this.context);
     if (granted) {
-      this.startScan();
+      // 首次加载立即扫描
+      this.refreshScan();
     }
   }
 
-  startScan() {
-    this.onlineHistoryIDs = [];
+  onPageShow() {
+    // 页面显示时，启动周期性刷新 (每5秒)
+    this.startScanLoop();
+  }
+
+  onPageHide() {
+    // 页面隐藏时，停止定时器和扫描，节省电量
+    this.stopScanLoop();
+  }
+
+  startScanLoop() {
+    // 先清除旧的定时器防止叠加
+    this.stopScanLoop();
+
+    // 立即执行一次
+    this.refreshScan();
+
+    // 开启循环
+    this.scanTimer = setInterval(() => {
+      this.refreshScan();
+    }, 5000); // 5000ms = 5秒
+  }
+
+  stopScanLoop() {
+    if (this.scanTimer !== -1) {
+      clearInterval(this.scanTimer);
+      this.scanTimer = -1;
+    }
+    // 可选：页面隐藏时停止蓝牙扫描
+    this.btManager.stopScan();
+  }
+
+  // 执行一次刷新扫描
+  refreshScan() {
+    // 清空“新发现设备”，防止显示已经离开的设备
+    // 注意：不清空 historyDevices，因为它们是持久化的
     this.newDevices = [];
 
     this.btManager.startScan((device: ScannedDevice) => {
       let isHistory = this.historyDevices.some((d: SavedDevice) => d.deviceId === device.deviceId);
 
-      if (isHistory) {
-        if (!this.onlineHistoryIDs.includes(device.deviceId)) {
-          this.onlineHistoryIDs.push(device.deviceId);
-        }
-      } else {
+      if (!isHistory) {
+        // 如果是新设备，且列表里还没有
         let exists = this.newDevices.some((d: ScannedDevice) => d.deviceId === device.deviceId);
         if (!exists) {
           this.newDevices.push(device);
         }
       }
+      // 如果是历史设备，我们不需要做什么，因为它已经永久显示在上面的列表里了
     });
-  }
-
-  getDisplayHistoryList(): ScannedDevice[] {
-    let list: ScannedDevice[] = [];
-
-    this.historyDevices.forEach((saved: SavedDevice) => {
-      list.push({
-        deviceId: saved.deviceId,
-        deviceName: saved.deviceName,
-        rssi: 0
-      });
-    });
-
-    list.sort((a: ScannedDevice, b: ScannedDevice) => {
-      let aOnline = this.onlineHistoryIDs.includes(a.deviceId);
-      let bOnline = this.onlineHistoryIDs.includes(b.deviceId);
-      if (aOnline && !bOnline) return -1;
-      if (!aOnline && bOnline) return 1;
-      return 0;
-    });
-
-    return list;
   }
 
   handleConnectSuccess(device: ScannedDevice) {
@@ -168,10 +178,6 @@ export struct IndexPage {
     this.historyDevices = newHistory;
 
     this.newDevices = this.newDevices.filter((d: ScannedDevice) => d.deviceId !== device.deviceId);
-
-    if (!this.onlineHistoryIDs.includes(device.deviceId)) {
-      this.onlineHistoryIDs.push(device.deviceId);
-    }
   }
 
   build() {
@@ -183,7 +189,7 @@ export struct IndexPage {
         .padding({ left: 20, top: 20, bottom: 10 })
 
       List() {
-        // --- 已配对设备 ---
+        // --- 第一部分：已配对设备 (始终显示，始终可点) ---
         if (this.historyDevices.length > 0) {
           ListItem() {
             Text("已配对设备")
@@ -192,13 +198,12 @@ export struct IndexPage {
               .margin({ bottom: 8, left: 5 })
           }
 
-          ForEach(this.getDisplayHistoryList(), (item: ScannedDevice) => {
+          ForEach(this.historyDevices, (item: SavedDevice) => {
             ListItem() {
-              // 【修复2】显式声明回调参数类型 (d: ScannedDevice): void
               DeviceItem({
-                device: item,
+                // 构造一个临时的 ScannedDevice 对象传进去
+                device: { deviceId: item.deviceId, deviceName: item.deviceName, rssi: 0 },
                 isHistory: true,
-                isOnline: this.onlineHistoryIDs.includes(item.deviceId),
                 btManager: this.btManager,
                 onConnectSuccess: (d: ScannedDevice): void => this.handleConnectSuccess(d)
               })
@@ -206,17 +211,18 @@ export struct IndexPage {
           })
         }
 
-        // --- 新发现设备 ---
+        // --- 第二部分：新发现设备 (每5秒刷新一次) ---
         ListItem() {
           Row() {
             Text("新发现设备")
               .fontSize(14)
               .fontColor('#666666')
             Blank()
+            // 手动刷新按钮（虽然有自动刷新，但保留手动也不错）
             Text("刷新")
               .fontSize(14)
               .fontColor('#007DFF')
-              .onClick(() => { this.startScan() })
+              .onClick(() => { this.refreshScan() })
           }
           .width('100%')
           .padding({ left: 5, right: 5, top: 10, bottom: 8 })
@@ -235,11 +241,9 @@ export struct IndexPage {
 
         ForEach(this.newDevices, (item: ScannedDevice) => {
           ListItem() {
-            // 【修复2】显式声明回调参数类型 (d: ScannedDevice): void
             DeviceItem({
               device: item,
               isHistory: false,
-              isOnline: true,
               btManager: this.btManager,
               onConnectSuccess: (d: ScannedDevice): void => this.handleConnectSuccess(d)
             })
