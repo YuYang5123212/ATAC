@@ -3,7 +3,6 @@ import { PermissionManager } from '../utils/PermissionManager';
 import { promptAction } from '@kit.ArkUI';
 import type common from '@ohos.app.ability.common';
 
-// 初始化持久化存储
 PersistentStorage.persistProp('HistoryDevices', []);
 
 interface SavedDevice {
@@ -18,70 +17,96 @@ struct DeviceItem {
   btManager: BluetoothManager | null = null;
   onConnectSuccess: (device: ScannedDevice) => void = (device: ScannedDevice) => {};
 
-  @StorageLink('CurrentConnectedID') currentConnectedID: string = '';
+  // 【核心变更】这里是一个数组，包含所有已连接的 ID
+  @StorageLink('ConnectedIDs') connectedIDs: string[] = [];
   @State isConnecting: boolean = false;
 
   build() {
-    Row() {
-      Column() {
-        Text(this.device.deviceName || "未知设备")
-          .fontSize(18)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(this.isConnected() ? '#007DFF' : '#333333')
+    Column() {
+      // 上半部分：信息与连接按钮
+      Row() {
+        Column() {
+          Text(this.device.deviceName || "未知设备")
+            .fontSize(18)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(this.isConnected() ? '#007DFF' : '#333333')
 
-        Text(this.device.deviceId)
-          .fontSize(14)
-          .fontColor('#999999')
-          .margin({ top: 4 })
+          Text(this.device.deviceId)
+            .fontSize(14)
+            .fontColor('#999999')
+            .margin({ top: 4 })
+        }
+        .alignItems(HorizontalAlign.Start)
+
+        Blank()
+
+        Button(this.getButtonText())
+          .height(30) // 稍微改小一点，给下面的控制留空间
+          .fontSize(12)
+          .backgroundColor(this.getButtonColor())
+          .enabled(!this.isConnecting) // 只有连接中不可点
+          .onClick(async () => {
+            this.handleButtonClick();
+          })
+          .animation({ duration: 300 })
       }
-      .alignItems(HorizontalAlign.Start)
+      .width('100%')
 
-      Blank()
+      // 下半部分：控制面板 (只有连接成功才显示)
+      if (this.isConnected()) {
+        Row({ space: 20 }) {
+          Button("开 门")
+            .type(ButtonType.Normal)
+            .borderRadius(8)
+            .backgroundColor('#4CAF50') // 绿
+            .fontColor(Color.White)
+            .width('45%')
+            .height(40)
+            .onClick(() => {
+              // 传入当前设备 ID
+              this.btManager?.sendCommand(this.device.deviceId, "1");
+            })
 
-      Button(this.getButtonText())
-        .height(36)
-        .fontSize(14)
-        .backgroundColor(this.getButtonColor())
-        .enabled(this.isButtonEnabled())
-        .onClick(async () => {
-          this.handleButtonClick();
-        })
-        .animation({ duration: 300 })
+          Button("关 门")
+            .type(ButtonType.Normal)
+            .borderRadius(8)
+            .backgroundColor('#FF5252') // 红
+            .fontColor(Color.White)
+            .width('45%')
+            .height(40)
+            .onClick(() => {
+              this.btManager?.sendCommand(this.device.deviceId, "0");
+            })
+        }
+        .width('100%')
+        .justifyContent(FlexAlign.Center)
+        .margin({ top: 15 })
+        .transition({ type: TransitionType.All, opacity: 0, translate: { y: -10 } }) // 动画效果
+      }
     }
     .width('100%')
-    .padding({ left: 15, right: 15, top: 12, bottom: 12 })
+    .padding(15)
     .backgroundColor(Color.White)
     .borderRadius(12)
     .margin({ bottom: 10 })
     .shadow({ radius: 4, color: '#1A000000', offsetY: 2 })
+    .animation({ duration: 300 }) // 让卡片高度变化有动画
   }
 
+  // 判断当前设备是否在连接列表中
   isConnected(): boolean {
-    return this.currentConnectedID === this.device.deviceId;
-  }
-
-  isButtonEnabled(): boolean {
-    // 1. 如果正在连接中，禁用
-    if (this.isConnecting) return false;
-
-    // 2. 如果连着别的设备，禁用（防止多连冲突）
-    if (this.currentConnectedID !== '' && !this.isConnected()) return false;
-
-    // 其他情况（包括历史设备无论是否在线）都允许点击
-    return true;
+    return this.connectedIDs.includes(this.device.deviceId);
   }
 
   getButtonText(): string {
     if (this.isConnecting) return "连接中...";
     if (this.isConnected()) return "断 开";
-    // 历史设备不再显示"未找到"或"尝试连接"，统一回归原始设计
     return "连 接";
   }
 
   getButtonColor(): ResourceColor {
     if (this.isConnecting) return '#CCCCCC';
-    if (this.isConnected()) return '#FF5252';
-    // 默认蓝色
+    if (this.isConnected()) return '#E91E63'; // 断开用深红色区分
     return '#007DFF';
   }
 
@@ -89,7 +114,8 @@ struct DeviceItem {
     if (!this.btManager) return;
 
     if (this.isConnected()) {
-      this.btManager.close();
+      // 断开特定设备
+      this.btManager.close(this.device.deviceId);
       return;
     }
 
@@ -110,37 +136,29 @@ export struct IndexPage {
 
   private btManager = new BluetoothManager();
   private context = getContext(this) as common.UIAbilityContext;
-  private scanTimer: number = -1; // 定时器 ID
+  private scanTimer: number = -1;
 
   async aboutToAppear() {
     let granted = await PermissionManager.requestBluetoothPermission(this.context);
     if (granted) {
-      // 首次加载立即扫描
       this.refreshScan();
     }
   }
 
   onPageShow() {
-    // 页面显示时，启动周期性刷新 (每5秒)
     this.startScanLoop();
   }
 
   onPageHide() {
-    // 页面隐藏时，停止定时器和扫描，节省电量
     this.stopScanLoop();
   }
 
   startScanLoop() {
-    // 先清除旧的定时器防止叠加
     this.stopScanLoop();
-
-    // 立即执行一次
     this.refreshScan();
-
-    // 开启循环
     this.scanTimer = setInterval(() => {
       this.refreshScan();
-    }, 5000); // 5000ms = 5秒
+    }, 5000);
   }
 
   stopScanLoop() {
@@ -148,27 +166,20 @@ export struct IndexPage {
       clearInterval(this.scanTimer);
       this.scanTimer = -1;
     }
-    // 可选：页面隐藏时停止蓝牙扫描
     this.btManager.stopScan();
   }
 
-  // 执行一次刷新扫描
   refreshScan() {
-    // 清空“新发现设备”，防止显示已经离开的设备
-    // 注意：不清空 historyDevices，因为它们是持久化的
     this.newDevices = [];
-
     this.btManager.startScan((device: ScannedDevice) => {
       let isHistory = this.historyDevices.some((d: SavedDevice) => d.deviceId === device.deviceId);
 
       if (!isHistory) {
-        // 如果是新设备，且列表里还没有
         let exists = this.newDevices.some((d: ScannedDevice) => d.deviceId === device.deviceId);
         if (!exists) {
           this.newDevices.push(device);
         }
       }
-      // 如果是历史设备，我们不需要做什么，因为它已经永久显示在上面的列表里了
     });
   }
 
@@ -189,7 +200,7 @@ export struct IndexPage {
         .padding({ left: 20, top: 20, bottom: 10 })
 
       List() {
-        // --- 第一部分：已配对设备 (始终显示，始终可点) ---
+        // --- 已配对设备 ---
         if (this.historyDevices.length > 0) {
           ListItem() {
             Text("已配对设备")
@@ -201,7 +212,6 @@ export struct IndexPage {
           ForEach(this.historyDevices, (item: SavedDevice) => {
             ListItem() {
               DeviceItem({
-                // 构造一个临时的 ScannedDevice 对象传进去
                 device: { deviceId: item.deviceId, deviceName: item.deviceName, rssi: 0 },
                 isHistory: true,
                 btManager: this.btManager,
@@ -211,14 +221,13 @@ export struct IndexPage {
           })
         }
 
-        // --- 第二部分：新发现设备 (每5秒刷新一次) ---
+        // --- 新发现设备 ---
         ListItem() {
           Row() {
             Text("新发现设备")
               .fontSize(14)
               .fontColor('#666666')
             Blank()
-            // 手动刷新按钮（虽然有自动刷新，但保留手动也不错）
             Text("刷新")
               .fontSize(14)
               .fontColor('#007DFF')
@@ -255,31 +264,7 @@ export struct IndexPage {
       .padding({ left: 15, right: 15 })
       .edgeEffect(EdgeEffect.Spring)
 
-      Column() {
-        Row({ space: 40 }) {
-          Button("开 门")
-            .type(ButtonType.Circle)
-            .width(80)
-            .height(80)
-            .backgroundColor('#4CAF50')
-            .fontSize(20)
-            .shadow({ radius: 10, color: '#4CAF50', offsetY: 5 })
-            .onClick(() => { this.btManager.openDoor(); })
-
-          Button("关 门")
-            .type(ButtonType.Circle)
-            .width(80)
-            .height(80)
-            .backgroundColor('#FF5252')
-            .fontSize(20)
-            .shadow({ radius: 10, color: '#FF5252', offsetY: 5 })
-            .onClick(() => { this.btManager.closeDoor(); })
-        }
-      }
-      .width('100%')
-      .padding({ top: 20, bottom: 30 })
-      .backgroundColor('#F9F9F9')
-      .borderRadius({ topLeft: 24, topRight: 24 })
+      // 注意：底部的全局控制台被移除了，因为现在每个设备独立控制
     }
     .width('100%')
     .height('100%')
