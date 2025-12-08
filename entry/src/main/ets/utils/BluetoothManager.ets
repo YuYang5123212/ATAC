@@ -120,30 +120,25 @@ export class BluetoothManager {
     if (!this.gattClient) return;
 
     try {
-      console.info('开始搜索服务...');
       let services = await this.gattClient.getServices();
-
-      // 打印查找到的所有服务，方便调试
-      services.forEach(s => console.info(`发现服务 UUID: ${s.serviceUuid}`));
-
       let targetService = services.find(s => s.serviceUuid === this.serviceUUID);
 
       if (!targetService) {
-        try { promptAction.showToast({ message: '未找到服务 FFE0，请重试' }); } catch(e) {}
-        console.error('服务搜索失败或未匹配');
-        // 不要 resolve(false)，保持连接让用户重试，或者自动重试
-        resolve(true);
+        // 【修改】注释掉这行弹窗，因为虽然没马上找到，但实际上连接并未断开，稍后也能用
+        // try { promptAction.showToast({ message: '未找到透传服务 FFE0' }); } catch(e) {}
+        console.error('未找到 UUID 为 ' + this.serviceUUID + ' 的服务');
+        resolve(true); // 依然返回 true，允许用户尝试控制
         return;
       }
 
-      try { promptAction.showToast({ message: '服务就绪，可以控制了！' }); } catch(e) {}
+      // try { promptAction.showToast({ message: '服务就绪' }); } catch(e) {}
       await this.enableNotification();
       resolve(true);
 
     } catch (err) {
       console.error('获取服务异常: ' + JSON.stringify(err));
-      // 常见错误：GATT 133 或 128，通常是因为配对没完成就调用了getServices
-      try { promptAction.showToast({ message: '服务获取受阻，请重连' }); } catch(e) {}
+      // 【修改】注释掉这行
+      // try { promptAction.showToast({ message: '服务获取受阻' }); } catch(e) {}
       resolve(false);
     }
   }
