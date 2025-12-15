@@ -9,10 +9,14 @@ export interface ScannedDevice {
 }
 
 export class BluetoothManager {
+  // 目标 UUID (小写)
   private serviceUUID: string = '0000ffe0-0000-1000-8000-00805f9b34fb';
   private characteristicUUID: string = '0000ffe1-0000-1000-8000-00805f9b34fb';
 
   private connectedClients: Map<string, ble.GattClientDevice> = new Map();
+  // 缓存系统返回的真实特征值对象
+  private deviceCharacteristics: Map<string, ble.BLECharacteristic> = new Map();
+
   private onDeviceFoundCallback?: (device: ScannedDevice) => void;
   private dataCallbacks: Map<string, (data: string) => void> = new Map();
 
@@ -60,7 +64,7 @@ export class BluetoothManager {
   public async connect(deviceId: string): Promise<boolean> {
     if (this.connectedClients.has(deviceId)) return true;
 
-    try { promptAction.showToast({ message: '正在连接 ' + deviceId }); } catch(e) {}
+    try { promptAction.showToast({ message: '正在连接...' }); } catch(e) {}
 
     let client: ble.GattClientDevice | null = null;
     try {
@@ -78,13 +82,14 @@ export class BluetoothManager {
             if (client) {
               this.connectedClients.set(deviceId, client);
               this.updateConnectedList();
-              // 延时一点，确保连接稳定
+              // 延时等待连接稳定
               setTimeout(async () => {
                 await this.discoverServices(deviceId, client, resolve);
-              }, 2000);
+              }, 1500);
             }
           } else if (state.state === constant.ProfileConnectionState.STATE_DISCONNECTED) {
             this.connectedClients.delete(deviceId);
+            this.deviceCharacteristics.delete(deviceId);
             this.dataCallbacks.delete(deviceId);
             this.updateConnectedList();
             try { promptAction.showToast({ message: '设备已断开' }); } catch(e) {}
@@ -107,27 +112,54 @@ export class BluetoothManager {
     if (!client) return;
     try {
       let services = await client.getServices();
-      // 1. 找到服务
-      let targetService = services.find(s => s.serviceUuid === this.serviceUUID);
+
+      // 策略1：寻找服务
+      let targetService = services.find(s => s.serviceUuid.toLowerCase() === this.serviceUUID.toLowerCase());
       if (!targetService) {
-        console.warn(`未找到服务 ${this.serviceUUID}`);
+        targetService = services.find(s => s.serviceUuid.toLowerCase().includes("ffe0"));
+      }
+      // 兜底：使用第一个服务
+      if (!targetService && services.length > 0) {
+        targetService = services[0];
+      }
+
+      if (!targetService) {
+        try { promptAction.showToast({ message: '无法识别服务' }); } catch(e) {}
         resolve(true);
         return;
       }
 
-      // 2. 找到特征值 (这是最关键的一步，必须用获取到的对象)
-      let targetChar = targetService.characteristics.find(c => c.characteristicUuid === this.characteristicUUID);
+      let targetChar: ble.BLECharacteristic | undefined;
+
+      // 策略2：寻找特征值
+      targetChar = targetService.characteristics.find(c => c.characteristicUuid.toLowerCase() === this.characteristicUUID.toLowerCase());
+
       if (!targetChar) {
-        console.warn(`未找到特征值 ${this.characteristicUUID}`);
+        targetChar = targetService.characteristics.find(c => c.characteristicUuid.toLowerCase().includes("ffe1"));
+      }
+
+      // 策略3：自动抓取第一个可写特征值 (【修复】增加 properties 空检查)
+      if (!targetChar) {
+        targetChar = targetService.characteristics.find(c => {
+          if (!c.properties) return false; // 严谨的空检查
+          return (c.properties.write || c.properties.writeNoResponse);
+        });
+      }
+
+      if (!targetChar) {
+        try { promptAction.showToast({ message: '未找到可写特征值' }); } catch(e) {}
         resolve(true);
         return;
       }
 
-      try { promptAction.showToast({ message: '设备就绪' }); } catch(e) {}
+      // 缓存真实对象
+      this.deviceCharacteristics.set(deviceId, targetChar);
+      try { promptAction.showToast({ message: '控制已就绪' }); } catch(e) {}
 
-      // 3. 传入真实的 characteristic 对象去开启通知
+      // 开启通知
       await this.enableNotification(deviceId, client, targetChar);
       resolve(true);
+
     } catch (err) {
       console.error("服务发现异常: " + JSON.stringify(err));
       resolve(false);
@@ -136,22 +168,26 @@ export class BluetoothManager {
 
   private async enableNotification(deviceId: string, client: ble.GattClientDevice, targetChar: ble.BLECharacteristic) {
     try {
-      // 1. 设置监听器
       client.on('BLECharacteristicChange', (characteristicChange) => {
         let value = new Uint8Array(characteristicChange.characteristicValue);
         let str = util.TextDecoder.create("utf-8", { ignoreBOM: true }).decodeToString(value);
-        console.info(`[RECV] ${deviceId}: ${str}`); // 在日志里也能看到
-
+        console.info(`[RECV] ${deviceId}: ${str}`);
         let callback = this.dataCallbacks.get(deviceId);
-        if (callback) {
-          callback(str);
-        }
+        if (callback) callback(str);
       });
 
-      // 2. 开启通知 (使用从服务中获取的真实对象)
-      await client.setCharacteristicChangeNotification(targetChar, true);
-      console.info("通知已开启: " + deviceId);
+      // 【修复】增加 properties 空检查，解决编译报错
+      let canNotify = false;
+      if (targetChar.properties) {
+        if (targetChar.properties.notify || targetChar.properties.indicate) {
+          canNotify = true;
+        }
+      }
 
+      if (canNotify) {
+        await client.setCharacteristicChangeNotification(targetChar, true);
+        console.info("通知监听已开启");
+      }
     } catch (err) {
       console.error("开启通知失败: " + JSON.stringify(err));
     }
@@ -159,8 +195,10 @@ export class BluetoothManager {
 
   public async sendCommand(deviceId: string, cmd: string) {
     let client = this.connectedClients.get(deviceId);
-    if (!client) {
-      try { promptAction.showToast({ message: '该设备未连接' }); } catch(e) {}
+    let targetChar = this.deviceCharacteristics.get(deviceId);
+
+    if (!client || !targetChar) {
+      try { promptAction.showToast({ message: '设备未就绪' }); } catch(e) {}
       return;
     }
 
@@ -168,20 +206,19 @@ export class BluetoothManager {
     let dataView = new DataView(buffer);
     for (let i = 0; i < cmd.length; i++) dataView.setUint8(i, cmd.charCodeAt(i));
 
-    // 发送时也重新构造一个简单的对象即可，或者也可以缓存之前的 targetChar
-    let writeChar: ble.BLECharacteristic = {
-      serviceUuid: this.serviceUUID,
-      characteristicUuid: this.characteristicUUID,
-      characteristicValue: buffer,
-      descriptors: []
-    };
+    // 直接修改缓存对象的 value
+    targetChar.characteristicValue = buffer;
 
     try {
-      await client.writeCharacteristicValue(writeChar, ble.GattWriteType.WRITE);
+      await client.writeCharacteristicValue(targetChar, ble.GattWriteType.WRITE);
+      console.info(`发送成功: ${cmd}`);
     } catch (err) {
       try {
-        await client.writeCharacteristicValue(writeChar, ble.GattWriteType.WRITE_NO_RESPONSE);
-      } catch(e2) {}
+        await client.writeCharacteristicValue(targetChar, ble.GattWriteType.WRITE_NO_RESPONSE);
+        console.info(`发送成功(无响应): ${cmd}`);
+      } catch(e2) {
+        console.error(`发送失败: ${JSON.stringify(e2)}`);
+      }
     }
   }
 
@@ -193,6 +230,7 @@ export class BluetoothManager {
         client.close();
       } catch(e) {}
       this.connectedClients.delete(deviceId);
+      this.deviceCharacteristics.delete(deviceId);
       this.dataCallbacks.delete(deviceId);
       this.updateConnectedList();
     }
