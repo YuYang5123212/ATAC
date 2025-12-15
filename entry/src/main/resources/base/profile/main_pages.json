@@ -1,6 +1,7 @@
 {
   "src": [
     "pages/LoginPage",
-    "pages/MainContainer"
+    "pages/MainContainer",
+    "pages/CardManagePage"
   ]
 }

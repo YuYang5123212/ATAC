@@ -292,7 +292,7 @@ export struct IndexPage {
 
   build() {
     Column() {
-      Text("智能门禁")
+      Text("AT智能门禁")
         .fontSize(24)
         .fontWeight(FontWeight.Bold)
         .width('100%')
