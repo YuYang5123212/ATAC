@@ -5,7 +5,6 @@ interface AccessCard {
   owner: string;
 }
 
-// 【关键修复】定义接口，不能使用字面量类型
 interface SavedDevice {
   deviceId: string;
   deviceName: string;
@@ -14,7 +13,6 @@ interface SavedDevice {
 @Entry
 @Component
 struct CardManagePage {
-  // 【关键修复】使用接口类型
   @StorageLink('HistoryDevices') historyDevices: SavedDevice[] = [];
 
   build() {
@@ -42,7 +40,6 @@ struct CardManagePage {
 
       // 2. 设备卡片列表
       List() {
-        // 【关键修复】ForEach 类型声明使用 SavedDevice
         ForEach(this.historyDevices, (device: SavedDevice) => {
           ListItem() {
             Column() {
@@ -83,12 +80,12 @@ struct CardManagePage {
     .width('100%')
     .height('100%')
     .backgroundColor('#F2F3F5')
+    .padding({ top: 36 }) // 【核心修复】增加顶部避让距离
   }
 
   @Builder
   CardRow(cardId: string, remark: string) {
     Row() {
-      // 暂时用 Text 占位，避免图片资源缺失报错
       Text('💳')
         .fontSize(20)
         .margin({ right: 10 })
