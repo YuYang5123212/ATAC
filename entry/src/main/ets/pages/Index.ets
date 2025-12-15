@@ -17,19 +17,40 @@ struct DeviceItem {
   btManager: BluetoothManager | null = null;
   onConnectSuccess: (device: ScannedDevice) => void = (device: ScannedDevice) => {};
 
-  // 【核心变更】这里是一个数组，包含所有已连接的 ID
   @StorageLink('ConnectedIDs') connectedIDs: string[] = [];
   @State isConnecting: boolean = false;
 
+  // 【新增】门锁状态：0=未知, 1=已开, 2=已关
+  @State doorState: number = 0;
+  // 【新增】最后收到的消息
+  @State lastMessage: string = '';
+
   build() {
     Column() {
-      // 上半部分：信息与连接按钮
+      // --- 上半部分：设备信息 & 连接按钮 ---
       Row() {
         Column() {
-          Text(this.device.deviceName || "未知设备")
-            .fontSize(18)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(this.isConnected() ? '#007DFF' : '#333333')
+          Row() {
+            Text(this.device.deviceName || "未知设备")
+              .fontSize(18)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(this.isConnected() ? '#007DFF' : '#333333')
+
+            // 【新增】状态小标签
+            if (this.isConnected()) {
+              if (this.doorState === 1) {
+                Text(" [已开]")
+                  .fontSize(14)
+                  .fontColor('#4CAF50')
+                  .fontWeight(FontWeight.Bold)
+              } else if (this.doorState === 2) {
+                Text(" [已关]")
+                  .fontSize(14)
+                  .fontColor('#FF5252')
+                  .fontWeight(FontWeight.Bold)
+              }
+            }
+          }
 
           Text(this.device.deviceId)
             .fontSize(14)
@@ -41,10 +62,10 @@ struct DeviceItem {
         Blank()
 
         Button(this.getButtonText())
-          .height(30) // 稍微改小一点，给下面的控制留空间
+          .height(30)
           .fontSize(12)
           .backgroundColor(this.getButtonColor())
-          .enabled(!this.isConnecting) // 只有连接中不可点
+          .enabled(!this.isConnecting)
           .onClick(async () => {
             this.handleButtonClick();
           })
@@ -52,36 +73,66 @@ struct DeviceItem {
       }
       .width('100%')
 
-      // 下半部分：控制面板 (只有连接成功才显示)
+      // --- 下半部分：控制面板 (连接成功显示) ---
       if (this.isConnected()) {
-        Row({ space: 20 }) {
-          Button("开 门")
-            .type(ButtonType.Normal)
-            .borderRadius(8)
-            .backgroundColor('#4CAF50') // 绿
-            .fontColor(Color.White)
-            .width('45%')
-            .height(40)
-            .onClick(() => {
-              // 传入当前设备 ID
-              this.btManager?.sendCommand(this.device.deviceId, "1");
-            })
+        Column() {
+          Divider().color('#F0F0F0').margin({ top: 10, bottom: 10 })
 
-          Button("关 门")
-            .type(ButtonType.Normal)
-            .borderRadius(8)
-            .backgroundColor('#FF5252') // 红
-            .fontColor(Color.White)
-            .width('45%')
-            .height(40)
-            .onClick(() => {
-              this.btManager?.sendCommand(this.device.deviceId, "0");
-            })
+          // 【新增】消息回显区
+          Row() {
+            Text("RX: " + (this.lastMessage || "等待数据..."))
+              .fontSize(12)
+              .fontColor('#666666')
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .maxLines(1)
+          }
+          .width('100%')
+          .padding({ left: 5, bottom: 10 })
+
+          // 按钮组
+          Row({ space: 15 }) {
+            // 开门
+            Button("开 门")
+              .type(ButtonType.Normal)
+              .borderRadius(8)
+              .backgroundColor('#4CAF50')
+              .fontColor(Color.White)
+              .layoutWeight(1) // 均分宽度
+              .height(40)
+              .onClick(() => {
+                this.btManager?.sendCommand(this.device.deviceId, "1");
+                this.lastMessage = "发送: 开门";
+              })
+
+            // 关门
+            Button("关 门")
+              .type(ButtonType.Normal)
+              .borderRadius(8)
+              .backgroundColor('#FF5252')
+              .fontColor(Color.White)
+              .layoutWeight(1)
+              .height(40)
+              .onClick(() => {
+                this.btManager?.sendCommand(this.device.deviceId, "0");
+                this.lastMessage = "发送: 关门";
+              })
+
+            // 【新增】查询按钮
+            Button("查 询")
+              .type(ButtonType.Normal)
+              .borderRadius(8)
+              .backgroundColor('#FF9800') // 橙色
+              .fontColor(Color.White)
+              .layoutWeight(1)
+              .height(40)
+              .onClick(() => {
+                this.btManager?.sendCommand(this.device.deviceId, "?");
+                this.lastMessage = "发送: 查询状态";
+              })
+          }
+          .width('100%')
         }
-        .width('100%')
-        .justifyContent(FlexAlign.Center)
-        .margin({ top: 15 })
-        .transition({ type: TransitionType.All, opacity: 0, translate: { y: -10 } }) // 动画效果
+        .transition({ type: TransitionType.All, opacity: 0, translate: { y: -10 } })
       }
     }
     .width('100%')
@@ -90,10 +141,9 @@ struct DeviceItem {
     .borderRadius(12)
     .margin({ bottom: 10 })
     .shadow({ radius: 4, color: '#1A000000', offsetY: 2 })
-    .animation({ duration: 300 }) // 让卡片高度变化有动画
+    .animation({ duration: 300 })
   }
 
-  // 判断当前设备是否在连接列表中
   isConnected(): boolean {
     return this.connectedIDs.includes(this.device.deviceId);
   }
@@ -106,7 +156,7 @@ struct DeviceItem {
 
   getButtonColor(): ResourceColor {
     if (this.isConnecting) return '#CCCCCC';
-    if (this.isConnected()) return '#E91E63'; // 断开用深红色区分
+    if (this.isConnected()) return '#E91E63';
     return '#007DFF';
   }
 
@@ -114,8 +164,10 @@ struct DeviceItem {
     if (!this.btManager) return;
 
     if (this.isConnected()) {
-      // 断开特定设备
       this.btManager.close(this.device.deviceId);
+      // 断开时重置状态
+      this.doorState = 0;
+      this.lastMessage = '';
       return;
     }
 
@@ -125,6 +177,25 @@ struct DeviceItem {
 
     if (success) {
       this.onConnectSuccess(this.device);
+
+      // 【核心逻辑】注册数据监听，处理 Arduino 回传
+      this.btManager.setOnDataReceived(this.device.deviceId, (data: string) => {
+        // 去除回车换行，更新消息显示
+        let cleanData = data.trim();
+        this.lastMessage = cleanData;
+
+        // 解析状态 (根据你的 Arduino 代码：SUCCESS:OPENED / STATE:OPEN)
+        if (cleanData.includes("OPEN")) {
+          this.doorState = 1; // 开锁状态
+        } else if (cleanData.includes("CLOSE")) {
+          this.doorState = 2; // 关锁状态
+        }
+      });
+
+      // 自动查一次状态，同步 UI
+      setTimeout(() => {
+        this.btManager?.sendCommand(this.device.deviceId, "?");
+      }, 3000); // 给一点时间让连接完全稳定
     }
   }
 }
@@ -187,7 +258,6 @@ export struct IndexPage {
     let newHistory = this.historyDevices.filter((d: SavedDevice) => d.deviceId !== device.deviceId);
     newHistory.unshift({ deviceId: device.deviceId, deviceName: device.deviceName });
     this.historyDevices = newHistory;
-
     this.newDevices = this.newDevices.filter((d: ScannedDevice) => d.deviceId !== device.deviceId);
   }
 
@@ -200,7 +270,6 @@ export struct IndexPage {
         .padding({ left: 20, top: 20, bottom: 10 })
 
       List() {
-        // --- 已配对设备 ---
         if (this.historyDevices.length > 0) {
           ListItem() {
             Text("已配对设备")
@@ -221,7 +290,6 @@ export struct IndexPage {
           })
         }
 
-        // --- 新发现设备 ---
         ListItem() {
           Row() {
             Text("新发现设备")
@@ -263,8 +331,6 @@ export struct IndexPage {
       .width('100%')
       .padding({ left: 15, right: 15 })
       .edgeEffect(EdgeEffect.Spring)
-
-      // 注意：底部的全局控制台被移除了，因为现在每个设备独立控制
     }
     .width('100%')
     .height('100%')

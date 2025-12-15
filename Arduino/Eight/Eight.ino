@@ -61,30 +61,39 @@ void setup() {
 }
 
 void loop() {
-  // --- 1. 蓝牙处理 (非阻塞模式) ---
+  // --- 1. 蓝牙处理 (适配鸿蒙 App 协议) ---
   if (BT.available()) {
-    char cmd = BT.read(); // 只读一个字符，绝不等待
-    Serial.print(F("BT:")); Serial.println(cmd);
-    
-    if (cmd == '1') { // 手机发送字符 '1' 开门
+    char cmd = BT.read(); // 读取单个字符指令
+    Serial.print(F("BT:")); Serial.println(cmd); // USB调试看一眼
+
+    if (cmd == '1') { // 开门指令
       openDoor();
-      BT.print('K'); // 回复 'K' 代表 OK
+      // 【关键】回传包含 OPEN 的字符串，让 App 变绿
+      BT.print(F("STATE:OPEN")); 
     } 
-    else if (cmd == '0') { // 手机发送字符 '0' 关门
+    else if (cmd == '0') { // 关门指令
       closeDoor();
-      BT.print('K');
+      // 【关键】回传包含 CLOSE 的字符串，让 App 变红
+      BT.print(F("STATE:CLOSED"));
     }
-    else if (cmd == '?') { // 查询状态
-      BT.print(doorState ? 'O' : 'C'); // O=Open, C=Closed
+    else if (cmd == '?') { // 查询指令
+      // 根据当前门锁状态回传
+      if (doorState) {
+        BT.print(F("STATE:OPEN"));
+      } else {
+        BT.print(F("STATE:CLOSED"));
+      }
     }
   }
 
-  // --- 2. 自动关门 ---
+  // --- 2. 自动关门逻辑 ---
   if (doorState && (millis() - doorOpenTime > 3000)) {
     closeDoor();
+    // 自动关门时也通知 App 更新状态
+    BT.print(F("STATE:CLOSED")); 
   }
 
-  // --- 3. RFID 处理 (每50ms检测一次，防止刷屏) ---
+  // --- 3. RFID 处理 (保持原样) ---
   if (millis() - lastRfidCheck > 50) {
     lastRfidCheck = millis();
     handleRFID();
