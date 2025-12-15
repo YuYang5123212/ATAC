@@ -1,13 +1,25 @@
 import { BluetoothManager, ScannedDevice } from '../utils/BluetoothManager';
 import { PermissionManager } from '../utils/PermissionManager';
+// 引入 LogItem (注意路径要对，如果报错请确认 LogPage.ets 的位置)
+// 这里我们为了方便，直接在下面重新定义接口结构，或者利用 Storage 直接操作
 import { promptAction } from '@kit.ArkUI';
 import type common from '@ohos.app.ability.common';
 
+// 初始化持久化存储
 PersistentStorage.persistProp('HistoryDevices', []);
+PersistentStorage.persistProp('AppLogs', []); // 确保日志存储已初始化
 
 interface SavedDevice {
   deviceId: string;
   deviceName: string;
+}
+
+// 简单的日志结构定义 (与 LogPage 保持一致)
+interface LogItem {
+  timestamp: string;
+  deviceName: string;
+  content: string;
+  type: 'SEND' | 'RECV';
 }
 
 @Component
@@ -17,17 +29,17 @@ struct DeviceItem {
   btManager: BluetoothManager | null = null;
   onConnectSuccess: (device: ScannedDevice) => void = (device: ScannedDevice) => {};
 
+  // 【新增】父组件传入的写日志方法
+  onAddLog: (text: string, type: 'SEND' | 'RECV') => void = () => {};
+
   @StorageLink('ConnectedIDs') connectedIDs: string[] = [];
   @State isConnecting: boolean = false;
 
-  // 【新增】门锁状态：0=未知, 1=已开, 2=已关
   @State doorState: number = 0;
-  // 【新增】最后收到的消息
   @State lastMessage: string = '';
 
   build() {
     Column() {
-      // --- 上半部分：设备信息 & 连接按钮 ---
       Row() {
         Column() {
           Row() {
@@ -36,15 +48,14 @@ struct DeviceItem {
               .fontWeight(FontWeight.Bold)
               .fontColor(this.isConnected() ? '#007DFF' : '#333333')
 
-            // 【新增】状态小标签
             if (this.isConnected()) {
               if (this.doorState === 1) {
-                Text(" [已开]")
+                Text(" [🔓]")
                   .fontSize(14)
                   .fontColor('#4CAF50')
                   .fontWeight(FontWeight.Bold)
               } else if (this.doorState === 2) {
-                Text(" [已关]")
+                Text(" [🔒]")
                   .fontSize(14)
                   .fontColor('#FF5252')
                   .fontWeight(FontWeight.Bold)
@@ -73,12 +84,10 @@ struct DeviceItem {
       }
       .width('100%')
 
-      // --- 下半部分：控制面板 (连接成功显示) ---
       if (this.isConnected()) {
         Column() {
           Divider().color('#F0F0F0').margin({ top: 10, bottom: 10 })
 
-          // 【新增】消息回显区
           Row() {
             Text("RX: " + (this.lastMessage || "等待数据..."))
               .fontSize(12)
@@ -89,22 +98,20 @@ struct DeviceItem {
           .width('100%')
           .padding({ left: 5, bottom: 10 })
 
-          // 按钮组
           Row({ space: 15 }) {
-            // 开门
             Button("开 门")
               .type(ButtonType.Normal)
               .borderRadius(8)
               .backgroundColor('#4CAF50')
               .fontColor(Color.White)
-              .layoutWeight(1) // 均分宽度
+              .layoutWeight(1)
               .height(40)
               .onClick(() => {
                 this.btManager?.sendCommand(this.device.deviceId, "1");
-                this.lastMessage = "发送: 开门";
+                // 【埋点】记录日志
+                this.onAddLog("发送开门指令", 'SEND');
               })
 
-            // 关门
             Button("关 门")
               .type(ButtonType.Normal)
               .borderRadius(8)
@@ -114,20 +121,19 @@ struct DeviceItem {
               .height(40)
               .onClick(() => {
                 this.btManager?.sendCommand(this.device.deviceId, "0");
-                this.lastMessage = "发送: 关门";
+                this.onAddLog("发送关门指令", 'SEND');
               })
 
-            // 【新增】查询按钮
             Button("查 询")
               .type(ButtonType.Normal)
               .borderRadius(8)
-              .backgroundColor('#FF9800') // 橙色
+              .backgroundColor('#FF9800')
               .fontColor(Color.White)
               .layoutWeight(1)
               .height(40)
               .onClick(() => {
                 this.btManager?.sendCommand(this.device.deviceId, "?");
-                this.lastMessage = "发送: 查询状态";
+                this.onAddLog("查询状态", 'SEND');
               })
           }
           .width('100%')
@@ -165,7 +171,6 @@ struct DeviceItem {
 
     if (this.isConnected()) {
       this.btManager.close(this.device.deviceId);
-      // 断开时重置状态
       this.doorState = 0;
       this.lastMessage = '';
       return;
@@ -177,25 +182,25 @@ struct DeviceItem {
 
     if (success) {
       this.onConnectSuccess(this.device);
+      this.onAddLog("连接成功", 'RECV');
 
-      // 【核心逻辑】注册数据监听，处理 Arduino 回传
       this.btManager.setOnDataReceived(this.device.deviceId, (data: string) => {
-        // 去除回车换行，更新消息显示
         let cleanData = data.trim();
         this.lastMessage = cleanData;
 
-        // 解析状态 (根据你的 Arduino 代码：SUCCESS:OPENED / STATE:OPEN)
+        // 【埋点】收到消息记录日志
+        this.onAddLog(cleanData, 'RECV');
+
         if (cleanData.includes("OPEN")) {
-          this.doorState = 1; // 开锁状态
+          this.doorState = 1;
         } else if (cleanData.includes("CLOSE")) {
-          this.doorState = 2; // 关锁状态
+          this.doorState = 2;
         }
       });
 
-      // 自动查一次状态，同步 UI
       setTimeout(() => {
         this.btManager?.sendCommand(this.device.deviceId, "?");
-      }, 3000); // 给一点时间让连接完全稳定
+      }, 3000);
     }
   }
 }
@@ -204,6 +209,9 @@ struct DeviceItem {
 export struct IndexPage {
   @StorageLink('HistoryDevices') historyDevices: SavedDevice[] = [];
   @State newDevices: ScannedDevice[] = [];
+
+  // 绑定全局日志
+  @StorageLink('AppLogs') appLogs: LogItem[] = [];
 
   private btManager = new BluetoothManager();
   private context = getContext(this) as common.UIAbilityContext;
@@ -222,6 +230,28 @@ export struct IndexPage {
 
   onPageHide() {
     this.stopScanLoop();
+  }
+
+  // 【新增】添加日志的辅助函数
+  addLog(deviceName: string, content: string, type: 'SEND' | 'RECV') {
+    // 获取当前时间 HH:mm:ss
+    let now = new Date();
+    let timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+
+    let newItem: LogItem = {
+      timestamp: timeStr,
+      deviceName: deviceName,
+      content: content,
+      type: type
+    };
+
+    // 插入到最前面
+    this.appLogs.unshift(newItem);
+
+    // 限制日志条数，防止无限增长 (保留最近100条)
+    if (this.appLogs.length > 100) {
+      this.appLogs = this.appLogs.slice(0, 100);
+    }
   }
 
   startScanLoop() {
@@ -244,7 +274,6 @@ export struct IndexPage {
     this.newDevices = [];
     this.btManager.startScan((device: ScannedDevice) => {
       let isHistory = this.historyDevices.some((d: SavedDevice) => d.deviceId === device.deviceId);
-
       if (!isHistory) {
         let exists = this.newDevices.some((d: ScannedDevice) => d.deviceId === device.deviceId);
         if (!exists) {
@@ -284,7 +313,11 @@ export struct IndexPage {
                 device: { deviceId: item.deviceId, deviceName: item.deviceName, rssi: 0 },
                 isHistory: true,
                 btManager: this.btManager,
-                onConnectSuccess: (d: ScannedDevice): void => this.handleConnectSuccess(d)
+                onConnectSuccess: (d: ScannedDevice): void => this.handleConnectSuccess(d),
+                // 【核心】将 addLog 函数传给子组件使用
+                onAddLog: (text, type) => {
+                  this.addLog(item.deviceName || "未知", text, type);
+                }
               })
             }
           })
@@ -322,7 +355,11 @@ export struct IndexPage {
               device: item,
               isHistory: false,
               btManager: this.btManager,
-              onConnectSuccess: (d: ScannedDevice): void => this.handleConnectSuccess(d)
+              onConnectSuccess: (d: ScannedDevice): void => this.handleConnectSuccess(d),
+              // 【核心】传递日志回调
+              onAddLog: (text, type) => {
+                this.addLog(item.deviceName || "未知", text, type);
+              }
             })
           }
         })
