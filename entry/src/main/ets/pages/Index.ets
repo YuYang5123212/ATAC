@@ -26,7 +26,7 @@ struct PasswordDialog {
     Column() {
       Text("安全验证").fontSize(18).fontWeight(FontWeight.Bold).fontColor(Color.White).margin({ top: 20, bottom: 10 })
       Text("首次开门请输入密码").fontSize(14).fontColor('#AAAAAA').margin({ bottom: 20 })
-      TextInput({ placeholder: '请输入密码 (123)' }).type(InputType.Password).maxLength(6).width('85%').height(45)
+      TextInput({ placeholder: '请输入密码 (123)' }).type(InputType.Password).maxLength(6).width('45%').height(45)
         .backgroundColor('#333333').fontColor(Color.White).placeholderColor('#666666')
         .onChange((value: string) => { this.inputValue = value; })
 
@@ -83,9 +83,6 @@ struct DeviceItem {
       if (this.isConnected()) {
         Column() {
           Divider().color('#333333').margin({ top: 10, bottom: 10 })
-          Row() {
-            Text("RX: " + (this.lastMessage || "等待数据...")).fontSize(12).fontColor('#AAAAAA').textOverflow({ overflow: TextOverflow.Ellipsis }).maxLines(1)
-          }.width('100%').padding({ left: 5, bottom: 10 })
 
           Row({ space: 15 }) {
             Button("开 门").type(ButtonType.Normal).borderRadius(8).backgroundColor('#2E7D32').fontColor(Color.White).layoutWeight(1).height(40)
@@ -157,7 +154,7 @@ struct DeviceItem {
 
 @Component
 export struct IndexPage {
-  @StorageLink('HistoryDevices_JSON') historyJson: string = '[]';
+  @StorageLink('HistoryDevices_JSON') @Watch('onHistoryChanged') historyJson: string = '[]';
   @StorageLink('AppLogs_JSON') logsJson: string = '[]';
 
   @State historyDevices: SavedDevice[] = [];
@@ -171,15 +168,20 @@ export struct IndexPage {
   private scanTimer: number = -1;
 
   aboutToAppear() {
+    this.onHistoryChanged(); // 初始化时先解析一次
+    this.initScan();
+  }
+
+  onHistoryChanged() {
     try {
-      // 只有当 JSON 不为空时才解析，避免覆盖
       if (this.historyJson && this.historyJson !== '[]') {
         this.historyDevices = JSON.parse(this.historyJson);
+      } else {
+        this.historyDevices = [];
       }
     } catch(e) {
-      console.error('历史记录解析失败', e);
+      this.historyDevices = [];
     }
-    this.initScan();
   }
 
   async initScan() {
